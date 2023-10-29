@@ -3,6 +3,7 @@
 
 import random
 
+loop = 10 ** 6  # 模拟100万次
 # 初始化WBG_NRG相遇的次数，没有内战的次数
 WBG_NRG_times = 0
 NO_same_times = 0
@@ -62,7 +63,6 @@ def main():
 
 
 if __name__ == '__main__':
-    loop = 10 ** 6  # 100万
     for i in range(loop):
         main()
     print(f"全部内战概率为: {NO_same_times / loop * 100:.2f}% \nWBG打NRG概率为: {WBG_NRG_times / loop * 100:.2f}% \n"
