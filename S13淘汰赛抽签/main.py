@@ -48,7 +48,7 @@ def main():
         # 如果是外战的队伍放入result[1]，内战的队伍放入result[0]
         result[1 if ((dict_3to1[_3to1[0]] & 3) - (dict_3to1[_3to1[1]] & 3)) else 0].append({_3to1[0], _3to1[1]})
         # 如果是 NRG 和 WBG，计数
-        if dict_3to1[_3to1[0]] & 4 == dict_3to1[_3to1[1]] & 4 == 4:
+        if dict_3to1[_3to1[0]] >> 2 == dict_3to1[_3to1[1]] >> 2 == 1:
             WBG_NRG_times += 1
             temp = 1
         # 从字典中移除选择的队伍
