@@ -1,3 +1,5 @@
+import time
+
 import pandas as pd
 import tushare as ts
 import numpy as np
@@ -9,10 +11,11 @@ from pandas_datareader import data as web
 def single_stock():
     ts.set_token('995776e5cebde1974a4fbab03deb2a5a7b91badb4e03070172a28f6e')
     pro = ts.pro_api()
+    print(pro.user(token='995776e5cebde1974a4fbab03deb2a5a7b91badb4e03070172a28f6e'))
 
-    df1 = pro.fund_basic(market='O', ts_code='160222.OF')
-    df2 = pro.fund_daily(ts_code='160222.OF', start_date='20200601', end_date='20200813')
-    df3 = pro.fund_daily(ts_code='150018.SZ', start_date='20180101', end_date='20181029')
+    # df1 = pro.fund_basic(market='O', ts_code='160222.OF')
+    df2 = pro.daily(ts_code='160222.OF', start_date='20200601', end_date='20200813')
+    df3 = pro.daily(ts_code='150018.SZ', start_date='20180101', end_date='20181029')
     print(df2)
 
     # 贵州茅台
@@ -24,11 +27,14 @@ def single_stock():
     df4_6 = pro.daily(ts_code='600519.SH', start_date='20150101', end_date='20151231')
     years = [df4_1, df4_2, df4_3, df4_4, df4_5, df4_6]
 
-    for x in range(2020, 2010, -1):
-        df = pro.daily(ts_code='600519.SH', start_date=str(x) + '0101', end_date=str(x) + '1231')
+    for x in range(2024, 2010, -1):
+        df = pro.index_daily(ts_code='399300.SZ', start_date=str(x) + '0101', end_date=str(x) + '1231')
         a = np.log(df['close'].shift(1) / df['close'])
         sharpe = (a.mean() * 252 - 0.014) / (a.std() * math.sqrt(252))
         print('sharpe in ' + str(x) + ' = ' + str('%.4f' % sharpe))
+
+
+single_stock()
 
 
 # A股主要股指、股票过去十年的夏普指数
@@ -66,7 +72,7 @@ def American_index():
     lists_2 = ['BABA']
     lists_3 = ['FB']
     lists = lists_1 + lists_2 + lists_3
-    lists = ['AAPL']
+    lists = ['^IXIC']
     table = pd.DataFrame([], columns=['2020', '2019', '2018', '2017', '2016', '2015', '2014', '2013', '2012', '2011'],
                          index=lists)
 
@@ -92,7 +98,7 @@ def American_index():
             table[str(x)][one] = '%.4f' % sharpe
 
     print(table)
-    table.to_excel('C://quant//American stock market.xlsx')
+    # table.to_excel('C://quant//American stock market.xlsx')
 
 
 # A股一级行业指数过去十年的夏普指数
