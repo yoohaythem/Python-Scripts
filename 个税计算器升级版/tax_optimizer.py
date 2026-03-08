@@ -1,12 +1,12 @@
 # -*- coding: utf-8 -*-
 """
-南京/全国通用 - 年终一次性奖金多年最优提取计算工具 (CLI 命令行版)
+全国通用 - 年终一次性奖金多年最优提取计算工具 (CLI 命令行版)
 作者：于海翔
 版本：2026.3
 
 功能：
     1. 计算年终奖单独计税 vs 并入综合所得的最优方案
-    2. 支持两年联动优化（奖金递延/提前），寻找全局最低税负
+    2. 支持1-2年联动优化（奖金递延/提前），寻找全局最低税负
     3. 内置 2026 年最新个税专项附加扣除标准
 
 ================================================================================
@@ -39,7 +39,7 @@ python3 tax_optimizer.py --help
 
 import argparse
 import sys
-from typing import Dict, Tuple
+from typing import Dict, Tuple, List
 
 # ==============================================================================
 # 税率表配置
@@ -48,7 +48,6 @@ from typing import Dict, Tuple
 class TaxRates:
     """个税税率表配置"""
     
-    # 综合所得税率表 (年应纳税所得额)
     COMPREHENSIVE_RATES = [
         (0, 36000, 0.03, 0, "3%"),
         (36000, 144000, 0.10, 2520, "10%"),
@@ -59,7 +58,6 @@ class TaxRates:
         (960000, float('inf'), 0.45, 181920, "45%")
     ]
     
-    # 年终奖单独计税率表
     BONUS_RATES = [
         (0, 36000, 0.03, 0),
         (36000, 144000, 0.10, 210),
@@ -113,10 +111,7 @@ class TaxCalculator:
         for low, high, rate, _, rate_str in TaxRates.COMPREHENSIVE_RATES:
             if low < taxable_income <= high:
                 excess = taxable_income - low
-                if high != float('inf'):
-                    percent = excess / (high - low) * 100
-                else:
-                    percent = 0
+                percent = excess / (high - low) * 100 if high != float('inf') else 0
                 return {
                     'bracket_rate': rate_str,
                     'bracket_low': low,
@@ -158,22 +153,84 @@ class TaxCalculator:
 # ==============================================================================
 
 class OptimizationEngine:
-    """多年奖金优化引擎（支持分拆 + 递延）"""
+    """多年奖金优化引擎（支持 1-2 年优化）"""
     
-    def __init__(self):
+    def __init__(self, years: int = 2):
         self.calculator = TaxCalculator()
+        self.years = years
     
-    def optimize_two_years(self, year1_data: Dict, year2_data: Dict) -> Dict:
-        """执行两年联动优化"""
-        s1 = year1_data['annual_salary']
-        d1 = year1_data['annual_deductions']
-        b1 = year1_data['bonus']
+    def optimize_multi_years(self, years_data: List[Dict]) -> Dict:
+        """执行多年联动优化"""
         
-        s2 = year2_data['annual_salary']
-        d2 = year2_data['annual_deductions']
-        b2 = year2_data['bonus']
+        n = len(years_data)
         
-        total_bonus_pool = b1 + b2
+        # 提取基础数据
+        salaries = [d['annual_salary'] for d in years_data]
+        deductions = [d['annual_deductions'] for d in years_data]
+        bonuses = [d['bonus'] for d in years_data]
+        socials = [d['monthly_social'] * 12 for d in years_data]
+        housings = [d['monthly_housing'] * 12 for d in years_data]
+        
+        total_bonus_pool = sum(bonuses)
+        
+        print(f"🔍 正在搜索最优方案...（{n} 年奖金池总计 {total_bonus_pool:,.0f} 元）")
+        
+        if n == 1:
+            return self._optimize_single_year(salaries[0], deductions[0], bonuses[0], 
+                                              socials[0], housings[0])
+        elif n == 2:
+            return self._optimize_two_years(salaries, deductions, bonuses, socials, housings)
+        else:
+            raise ValueError("目前仅支持 1-2 年优化")
+    
+    def _optimize_single_year(self, salary: float, deduction: float, bonus: float, 
+                              social: float, housing: float) -> Dict:
+        """单年优化"""
+        best_config = {}
+        min_tax = float('inf')
+        split_step = 1000
+        
+        for split in range(0, int(bonus) + 1, split_step):
+            tax, method, comp = self.calculator.calculate_year_tax_with_split(
+                salary, deduction, bonus, split
+            )
+            if tax < min_tax:
+                min_tax = tax
+                best_config = {
+                    'year1_bonus_total': bonus,
+                    'year1_bonus_separate': split,
+                    'year1_bonus_merged': bonus - split,
+                    'year1_tax': tax,
+                    'year1_method': method,
+                    'year1_comp_taxable': comp,
+                    'total_tax': tax
+                }
+        
+        orig_tax, orig_method, orig_comp = self.calculator.calculate_year_tax_with_split(
+            salary, deduction, bonus, bonus
+        )
+        
+        return {
+            'years': 1,
+            'original': {
+                'year1_tax': orig_tax,
+                'year1_method': orig_method,
+                'year1_bonus': bonus,
+                'year1_comp_taxable': orig_comp,
+                'total_tax': orig_tax
+            },
+            'optimized': best_config,
+            'saving': orig_tax - min_tax,
+            'social': social,
+            'housing': housing
+        }
+    
+    def _optimize_two_years(self, salaries: List, deductions: List, bonuses: List,
+                           socials: List, housings: List) -> Dict:
+        """两年优化"""
+        s1, s2 = salaries[0], salaries[1]
+        d1, d2 = deductions[0], deductions[1]
+        b1, b2 = bonuses[0], bonuses[1]
         
         orig_tax1, orig_method1, orig_comp1 = self.calculator.calculate_year_tax_with_split(s1, d1, b1, b1)
         orig_tax2, orig_method2, orig_comp2 = self.calculator.calculate_year_tax_with_split(s2, d2, b2, b2)
@@ -181,13 +238,8 @@ class OptimizationEngine:
         
         best_config = {}
         min_total_tax = float('inf')
-        
         shift_step = 1000
         split_step = 1000
-        
-        print(f"🔍 正在搜索最优方案...（奖金池总计 {total_bonus_pool:,.0f} 元）")
-        print(f"   搜索范围：递延 0-{b1:,.0f} 元，分拆 0-当年奖金 元")
-        print(f"   步长精度：{shift_step} 元\n")
         
         for shift in range(0, int(b1) + 1, shift_step):
             current_b1_total = b1 - shift
@@ -195,7 +247,6 @@ class OptimizationEngine:
             
             for split1 in range(0, int(current_b1_total) + 1, split_step):
                 for split2 in range(0, int(current_b2_total) + 1, split_step):
-                    
                     tax1, method1, comp1 = self.calculator.calculate_year_tax_with_split(
                         s1, d1, current_b1_total, split1
                     )
@@ -225,19 +276,18 @@ class OptimizationEngine:
                         }
         
         return {
+            'years': 2,
             'original': {
-                'year1_tax': orig_tax1,
-                'year1_method': orig_method1,
-                'year1_bonus': b1,
+                'year1_tax': orig_tax1, 'year1_method': orig_method1, 'year1_bonus': b1,
                 'year1_comp_taxable': orig_comp1,
-                'year2_tax': orig_tax2,
-                'year2_method': orig_method2,
-                'year2_bonus': b2,
+                'year2_tax': orig_tax2, 'year2_method': orig_method2, 'year2_bonus': b2,
                 'year2_comp_taxable': orig_comp2,
                 'total_tax': orig_total_tax
             },
             'optimized': best_config,
-            'saving': orig_total_tax - min_total_tax
+            'saving': orig_total_tax - min_total_tax,
+            'socials': socials,
+            'housings': housings
         }
 
 # ==============================================================================
@@ -252,10 +302,8 @@ def create_argument_parser() -> argparse.ArgumentParser:
         description='🧮 南京/全国通用 - 年终一次性奖金多年最优提取计算工具',
         epilog='''
 ================================================================================
-💡 专项附加扣除标准参考 (2026 年最新版)
+💡 专项附加扣除标准参考 (2024 年最新版)
 ================================================================================
-
-请将以下符合您情况的金额相加，填入 --monthly-special-deduction 参数：
 
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │  扣除项目              标准金额 (每月)          说明                        │
@@ -271,43 +319,39 @@ def create_argument_parser() -> argparse.ArgumentParser:
 
 📌 计算示例：
    南京租房 (1500) + 独生子女赡养老人 (3000) + 1 个孩子 (2000) = 6500 元/月
-   则参数填写：--monthly-special-deduction 6500
 
 ⚠️ 注意事项：
    1. 住房租金和住房贷款利息只能二选一
    2. 本工具基于现行个税政策（年终奖单独计税优惠延续至 2027 年底）
    3. 奖金分拆发放需公司财务/HR 配合
    4. 社保基数与上年度平均工资挂钩，分拆/递延可能影响明年社保扣款
-   5. 本工具仅供参考，实际纳税以税务局汇算清缴为准
 
 ================================================================================
         ''',
         formatter_class=argparse.RawTextHelpFormatter
     )
     
+    parser.add_argument('--optimization-years', type=int, default=2, choices=[1, 2],
+        help='优化年限：1=单年，2=两年联动 (默认)')
+    
     year1_group = parser.add_argument_group('📅 第 1 年收入参数 (必填)')
     year1_group.add_argument('--monthly-salary', type=float, required=True, metavar='金额',
-        help='第 1 年每月税前工资收入 (元)')
+        help='第 1 年每月税前工资 (元)')
     year1_group.add_argument('--annual-bonus', type=float, required=True, metavar='金额',
         help='第 1 年预计年终奖金总额 (元)')
     year1_group.add_argument('--monthly-social-security', type=float, required=True, metavar='金额',
-        help='第 1 年每月社保个人缴纳部分 (元)')
+        help='第 1 年每月社保个人缴纳 (元)')
     year1_group.add_argument('--monthly-housing-fund', type=float, required=True, metavar='金额',
-        help='第 1 年每月公积金个人缴纳部分 (元)')
+        help='第 1 年每月公积金个人缴纳 (元)')
     year1_group.add_argument('--monthly-special-deduction', type=float, required=True, metavar='金额',
         help='第 1 年每月专项附加扣除总额 (元)')
     
     year2_group = parser.add_argument_group('📅 第 2 年收入参数 (选填)')
-    year2_group.add_argument('--year2-monthly-salary', type=float, default=None, metavar='金额',
-        help='第 2 年预计每月税前工资 (元)')
-    year2_group.add_argument('--year2-annual-bonus', type=float, default=None, metavar='金额',
-        help='第 2 年预计年终奖金总额 (元)')
-    year2_group.add_argument('--year2-monthly-social-security', type=float, default=None, metavar='金额',
-        help='第 2 年预计每月社保个人缴纳 (元)')
-    year2_group.add_argument('--year2-monthly-housing-fund', type=float, default=None, metavar='金额',
-        help='第 2 年预计每月公积金个人缴纳 (元)')
-    year2_group.add_argument('--year2-monthly-special-deduction', type=float, default=None, metavar='金额',
-        help='第 2 年预计每月专项附加扣除 (元)')
+    year2_group.add_argument('--year2-monthly-salary', type=float, default=None, metavar='金额')
+    year2_group.add_argument('--year2-annual-bonus', type=float, default=None, metavar='金额')
+    year2_group.add_argument('--year2-monthly-social-security', type=float, default=None, metavar='金额')
+    year2_group.add_argument('--year2-monthly-housing-fund', type=float, default=None, metavar='金额')
+    year2_group.add_argument('--year2-monthly-special-deduction', type=float, default=None, metavar='金额')
     
     return parser
 
@@ -333,18 +377,20 @@ def validate_arguments(args: argparse.Namespace) -> None:
 
 def prepare_year_data(args: argparse.Namespace, year: int) -> Dict:
     """根据命令行参数构建年度数据"""
-    if year == 1:
-        monthly_salary = args.monthly_salary
-        annual_bonus = args.annual_bonus
-        monthly_social = args.monthly_social_security
-        monthly_housing = args.monthly_housing_fund
-        monthly_deduction = args.monthly_special_deduction
-    else:
-        monthly_salary = args.year2_monthly_salary if args.year2_monthly_salary else args.monthly_salary
-        annual_bonus = args.year2_annual_bonus if args.year2_annual_bonus else args.annual_bonus
-        monthly_social = args.year2_monthly_social_security if args.year2_monthly_social_security else args.monthly_social_security
-        monthly_housing = args.year2_monthly_housing_fund if args.year2_monthly_housing_fund else args.monthly_housing_fund
-        monthly_deduction = args.year2_monthly_special_deduction if args.year2_monthly_special_deduction else args.monthly_special_deduction
+    # argparse 将 - 转换为 _，所以这里要用下划线
+    prefixes = {
+        1: ('', '', '', '', ''),
+        2: ('year2_', 'year2_', 'year2_', 'year2_', 'year2_')
+    }
+    
+    p = prefixes.get(year, prefixes[1])
+    
+    # 获取值，如果当年没传则用第 1 年的值
+    monthly_salary = getattr(args, f"{p[0]}monthly_salary") if getattr(args, f"{p[0]}monthly_salary", None) else args.monthly_salary
+    annual_bonus = getattr(args, f"{p[1]}annual_bonus") if getattr(args, f"{p[1]}annual_bonus", None) else args.annual_bonus
+    monthly_social = getattr(args, f"{p[2]}monthly_social_security") if getattr(args, f"{p[2]}monthly_social_security", None) else args.monthly_social_security
+    monthly_housing = getattr(args, f"{p[3]}monthly_housing_fund") if getattr(args, f"{p[3]}monthly_housing_fund", None) else args.monthly_housing_fund
+    monthly_deduction = getattr(args, f"{p[4]}monthly_special_deduction") if getattr(args, f"{p[4]}monthly_special_deduction", None) else args.monthly_special_deduction
     
     annual_deductions = 60000 + (monthly_social + monthly_housing + monthly_deduction) * 12
     annual_salary = monthly_salary * 12
@@ -382,7 +428,6 @@ def print_bracket_analysis(taxable_income: float, year_label: str, is_optimized:
     print(f"\n  {prefix} 【{year_label} 工资部分税率分析】")
     print(f"     应纳税所得额：¥{bracket['income']:>12,.2f}")
     
-    # ✅ 修复：分开处理无穷大的情况
     if bracket['bracket_high'] == float('inf'):
         high_str = "∞"
     else:
@@ -398,22 +443,15 @@ def print_bracket_analysis(taxable_income: float, year_label: str, is_optimized:
     elif bracket['bracket_low'] == 0:
         print(f"     💡 位于最低档 (3%)，还有 ¥{bracket['bracket_high'] - bracket['income']:,.2f} 空间")
 
-def print_input_summary(year1_data: Dict, year2_data: Dict, args: argparse.Namespace) -> None:
+def print_input_summary(years_data: List[Dict], args: argparse.Namespace) -> None:
     """打印输入数据摘要"""
-    print("\n" + "="*85)
+    print("\n" + "="*90)
     print("📋 输入数据核对")
-    print("="*85)
+    print("="*90)
     
-    for label, data in [("【第 1 年】", year1_data), ("【第 2 年】", year2_data)]:
-        if label == "【第 2 年】" and not (
-            args.year2_monthly_salary or args.year2_annual_bonus or 
-            args.year2_monthly_social_security or args.year2_monthly_housing_fund or 
-            args.year2_monthly_special_deduction
-        ):
-            print(f"\n{label} (与第 1 年相同，未配置独立参数)")
-            continue
-        
-        print(f"\n{label}")
+    for i, data in enumerate(years_data):
+        year_label = f"【第 {i+1} 年】"
+        print(f"\n{year_label}")
         print(f"  每月税前工资：        ¥{data['monthly_salary']:>12,.2f}")
         print(f"  预计年终奖金：        ¥{data['bonus']:>12,.2f}")
         print(f"  每月社保 (个人):       ¥{data['monthly_social']:>12,.2f}")
@@ -424,65 +462,115 @@ def print_input_summary(year1_data: Dict, year2_data: Dict, args: argparse.Names
         print(f"  年度扣除总额：        ¥{data['annual_deductions']:>12,.2f}")
     
     print(f"\n📊 【工资部分税率档位预览】(不含任何奖金)")
-    for label, data in [("第 1 年", year1_data), ("第 2 年", year2_data)]:
+    for i, data in enumerate(years_data):
         comp_only = data['annual_salary'] - data['annual_deductions']
         bracket = TaxCalculator.get_tax_bracket_info(comp_only)
         excess_str = f" 🔺超 {bracket['excess_amount']:,.0f} 元" if bracket['excess_amount'] > 0 else ""
-        print(f"  {label}：应纳税所得额 ¥{comp_only:>12,.2f} → {bracket['bracket_rate']}档{excess_str}")
+        print(f"  第{i+1}年：应纳税所得额 ¥{comp_only:>12,.2f} → {bracket['bracket_rate']}档{excess_str}")
     
-    print("\n" + "="*85)
+    print("\n" + "="*90)
 
-def print_optimization_result(result: Dict) -> None:
+def print_income_summary(years_data: List[Dict], result: Dict) -> None:
+    """打印收入汇总（税前 vs 税后）"""
+    n = result['years']
+    opt = result['optimized']
+    
+    print("\n" + "="*90)
+    print("💰 收入汇总（税前 vs 税后到手）")
+    print("="*90)
+    
+    total_gross = 0
+    total_social = 0
+    total_housing = 0
+    total_tax = 0
+    total_net = 0
+    
+    print(f"\n{'年度':<8} {'税前工资':>14} {'税前奖金':>14} {'社保':>12} {'公积金':>12} {'个税':>12} {'税后到手':>14}")
+    print(f"{'─'*90}")
+    
+    for i in range(n):
+        year_key = f"year{i+1}"
+        data = years_data[i]
+        
+        gross_salary = data['annual_salary']
+        gross_bonus = opt[f'{year_key}_bonus_total']
+        social = data['monthly_social'] * 12
+        housing = data['monthly_housing'] * 12
+        tax = opt[f'{year_key}_tax']
+        net = gross_salary + gross_bonus - social - housing - tax
+        
+        total_gross += gross_salary + gross_bonus
+        total_social += social
+        total_housing += housing
+        total_tax += tax
+        total_net += net
+        
+        print(f"第{i+1}年   ¥{gross_salary:>12,.2f}   ¥{gross_bonus:>12,.2f}   ¥{social:>10,.2f}   ¥{housing:>10,.2f}   ¥{tax:>10,.2f}   ¥{net:>12,.2f}")
+    
+    print(f"{'─'*90}")
+    print(f"合计     ¥{total_gross:>12,.2f}   {'':>12}   ¥{total_social:>10,.2f}   ¥{total_housing:>10,.2f}   ¥{total_tax:>10,.2f}   ¥{total_net:>12,.2f}")
+    
+    print(f"\n📈 收入分析：")
+    print(f"  税前总收入：    ¥{total_gross:>12,.2f}")
+    print(f"  社保总扣除：    ¥{total_social:>12,.2f}  ({total_social/total_gross*100:.1f}%)")
+    print(f"  公积金总扣除：  ¥{total_housing:>12,.2f}  ({total_housing/total_gross*100:.1f}%)")
+    print(f"  个税总缴纳：    ¥{total_tax:>12,.2f}  ({total_tax/total_gross*100:.1f}%)")
+    print(f"  ─────────────────────────────────")
+    print(f"  税后到手收入：  ¥{total_net:>12,.2f}")
+    print(f"  综合税负率：    {total_tax/total_gross*100:.2f}%")
+    
+    print("\n" + "="*90)
+
+def print_optimization_result(result: Dict, years_data: List[Dict]) -> None:
     """打印优化结果"""
+    n = result['years']
     orig = result['original']
     opt = result['optimized']
     
-    print("\n" + "="*85)
+    print("\n" + "="*90)
     print("📊 原始方案 (奖金全部单独计税，不做任何调整)")
-    print("="*85)
-    print(f"\n  第 1 年：奖金 ¥{orig['year1_bonus']:>12,.2f}  →  {orig['year1_method']:<20}  →  税额：¥{orig['year1_tax']:>12,.2f}")
-    print(f"  第 2 年：奖金 ¥{orig['year2_bonus']:>12,.2f}  →  {orig['year2_method']:<20}  →  税额：¥{orig['year2_tax']:>12,.2f}")
+    print("="*90)
+    
+    for i in range(n):
+        year_key = f"year{i+1}"
+        print(f"  第{i+1}年：奖金 ¥{orig[f'{year_key}_bonus']:>12,.2f}  →  {orig[f'{year_key}_method']:<20}  →  税额：¥{orig[f'{year_key}_tax']:>12,.2f}")
     print(f"  ─────────────────────────────────────────────────────────────────────────────────")
-    print(f"  两年总税负：¥{orig['total_tax']:>12,.2f}")
+    print(f"  总税负：¥{orig['total_tax']:>12,.2f}")
     
-    print_bracket_analysis(orig['year1_comp_taxable'], "第 1 年", is_optimized=False)
-    print_bracket_analysis(orig['year2_comp_taxable'], "第 2 年", is_optimized=False)
+    for i in range(n):
+        year_key = f"year{i+1}"
+        print_bracket_analysis(orig[f'{year_key}_comp_taxable'], f"第{i+1}年", is_optimized=False)
     
-    print("\n" + "="*85)
+    print("\n" + "="*90)
     print("🏆 最优节税方案")
-    print("="*85)
+    print("="*90)
     
-    if opt['shift_amount'] > 0:
+    if n == 2 and opt.get('shift_amount', 0) > 0:
         print(f"\n  💡 建议操作：从第 1 年奖金中递延 ¥{opt['shift_amount']:>12,.2f} 元 到第 2 年发放")
     else:
         print(f"\n  💡 建议操作：无需跨年度递延")
     
-    print(f"\n  【第 1 年】奖金总额：¥{opt['year1_bonus_total']:>12,.2f}")
-    if opt['year1_bonus_separate'] > 0 and opt['year1_bonus_merged'] > 0:
-        print(f"    ├─ 单独计税部分：¥{opt['year1_bonus_separate']:>12,.2f}  (作为年终奖发放)")
-        print(f"    └─ 并入工资部分：¥{opt['year1_bonus_merged']:>12,.2f}  (作为绩效工资发放)")
-    elif opt['year1_bonus_separate'] > 0:
-        print(f"    └─ 全部单独计税：¥{opt['year1_bonus_separate']:>12,.2f}  (作为年终奖发放)")
-    else:
-        print(f"    └─ 全部并入工资：¥{opt['year1_bonus_merged']:>12,.2f}  (作为绩效工资发放)")
-    print(f"    计税方式：{opt['year1_method']}")
-    print(f"    预计个税：¥{opt['year1_tax']:>12,.2f}")
-    print_bracket_analysis(opt['year1_comp_taxable'], "第 1 年", is_optimized=True)
-    
-    print(f"\n  【第 2 年】奖金总额：¥{opt['year2_bonus_total']:>12,.2f}")
-    if opt['year2_bonus_separate'] > 0 and opt['year2_bonus_merged'] > 0:
-        print(f"    ├─ 单独计税部分：¥{opt['year2_bonus_separate']:>12,.2f}  (作为年终奖发放)")
-        print(f"    └─ 并入工资部分：¥{opt['year2_bonus_merged']:>12,.2f}  (作为绩效工资发放)")
-    elif opt['year2_bonus_separate'] > 0:
-        print(f"    └─ 全部单独计税：¥{opt['year2_bonus_separate']:>12,.2f}  (作为年终奖发放)")
-    else:
-        print(f"    └─ 全部并入工资：¥{opt['year2_bonus_merged']:>12,.2f}  (作为绩效工资发放)")
-    print(f"    计税方式：{opt['year2_method']}")
-    print(f"    预计个税：¥{opt['year2_tax']:>12,.2f}")
-    print_bracket_analysis(opt['year2_comp_taxable'], "第 2 年", is_optimized=True)
+    for i in range(n):
+        year_key = f"year{i+1}"
+        print(f"\n  【第{i+1}年】奖金总额：¥{opt[f'{year_key}_bonus_total']:>12,.2f}")
+        
+        separate = opt[f'{year_key}_bonus_separate']
+        merged = opt[f'{year_key}_bonus_merged']
+        
+        if separate > 0 and merged > 0:
+            print(f"    ├─ 单独计税部分：¥{separate:>12,.2f}  (作为年终奖发放)")
+            print(f"    └─ 并入工资部分：¥{merged:>12,.2f}  (作为绩效工资发放)")
+        elif separate > 0:
+            print(f"    └─ 全部单独计税：¥{separate:>12,.2f}  (作为年终奖发放)")
+        else:
+            print(f"    └─ 全部并入工资：¥{merged:>12,.2f}  (作为绩效工资发放)")
+        
+        print(f"    计税方式：{opt[f'{year_key}_method']}")
+        print(f"    预计个税：¥{opt[f'{year_key}_tax']:>12,.2f}")
+        print_bracket_analysis(opt[f'{year_key}_comp_taxable'], f"第{i+1}年", is_optimized=True)
     
     print(f"\n  ─────────────────────────────────────────────────────────────────────────────────")
-    print(f"  两年总税负：¥{opt['total_tax']:>12,.2f}")
+    print(f"  总税负：¥{opt['total_tax']:>12,.2f}")
     
     if result['saving'] > 0:
         print(f"\n  🎉 预计节税金额：¥{result['saving']:>12,.2f}")
@@ -490,18 +578,15 @@ def print_optimization_result(result: Dict) -> None:
     else:
         print(f"\n  ℹ️  预计节税金额：¥0.00 (原始方案已最优)")
     
-    print("\n" + "="*85)
+    print("\n" + "="*90)
 
 def print_warnings() -> None:
     """打印注意事项"""
     print("\n⚠️  重要提示：")
     print("  1. 本计算基于现行个税政策（年终奖单独计税优惠延续至 2027 年底）")
-    print("  2. 奖金分拆发放需公司财务/HR 配合")
-    print("  3. 跨年度递延需公司同意将部分奖金延后至次年发放")
-    print("  4. 递延/分拆奖金存在离职无法领取的风险，请谨慎评估")
-    print("  5. 社保基数与上年度平均工资挂钩，分拆/递延可能影响明年社保扣款")
-    print("  6. 本工具仅供参考，实际纳税以税务局汇算清缴为准")
-    print("\n" + "="*85 + "\n")
+    print("  2. 社保基数与上年度平均工资挂钩，分拆/递延可能影响明年社保扣款")
+    print("  3. 本工具仅供参考，实际纳税以税务局汇算清缴为准")
+    print("\n" + "="*90 + "\n")
 
 # ==============================================================================
 # 主程序入口
@@ -515,23 +600,25 @@ def main():
         print("\n❌ 错误：缺少必要参数")
         print("💡 示例：python3 tax_optimizer.py --monthly-salary 26200 --annual-bonus 95000 \\")
         print("         --monthly-social-security 2362.5 --monthly-housing-fund 1752 \\")
-        print("         --monthly-special-deduction 4500")
+        print("         --monthly-special-deduction 4500 --optimization-years 2")
         print("📖 使用 --help 查看完整帮助")
         sys.exit(1)
     
     args = parser.parse_args()
     validate_arguments(args)
     
-    year1_data = prepare_year_data(args, year=1)
-    year2_data = prepare_year_data(args, year=2)
+    years_data = []
+    for i in range(1, args.optimization_years + 1):
+        years_data.append(prepare_year_data(args, year=i))
     
-    print_input_summary(year1_data, year2_data, args)
+    print_input_summary(years_data, args)
     
-    engine = OptimizationEngine()
-    result = engine.optimize_two_years(year1_data, year2_data)
+    engine = OptimizationEngine(years=args.optimization_years)
+    result = engine.optimize_multi_years(years_data)
     
-    print_optimization_result(result)
+    print_optimization_result(result, years_data)
+    print_income_summary(years_data, result)
     print_warnings()
-
+    
 if __name__ == "__main__":
     main()
