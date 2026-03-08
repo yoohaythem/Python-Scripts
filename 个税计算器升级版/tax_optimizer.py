@@ -14,25 +14,13 @@
 ================================================================================
 
 # 场景 1：基础计算（两年收入相同）
-python3 tax_optimizer.py \\
-    --monthly-salary 15000 \\
-    --annual-bonus 80000 \\
-    --monthly-social-security 2000 \\
-    --monthly-housing-fund 2000 \\
-    --monthly-special-deduction 4500
+python tax_optimizer.py --monthly-salary 15000 --annual-bonus 80000 --monthly-social-security 2000 --monthly-housing-fund 2000 --monthly-special-deduction 4500 --optimization-years 1
 
 # 场景 2：明年收入有变化（如涨薪、奖金变化）
-python3 tax_optimizer.py \\
-    --monthly-salary 15000 \\
-    --annual-bonus 80000 \\
-    --monthly-social-security 2000 \\
-    --monthly-housing-fund 2000 \\
-    --monthly-special-deduction 4500 \\
-    --year2-monthly-salary 16000 \\
-    --year2-annual-bonus 100000
+python tax_optimizer.py --monthly-salary 25000 --annual-bonus 80000 --monthly-social-security 2000 --monthly-housing-fund 2000 --monthly-special-deduction 4500 --year2-annual-bonus 100000 --optimization-years 2
 
 # 场景 3：查看完整帮助和扣除标准说明
-python3 tax_optimizer.py --help
+python tax_optimizer.py --help
 
 ================================================================================
 """
@@ -621,4 +609,5 @@ def main():
     print_warnings()
     
 if __name__ == "__main__":
+
     main()
